@@ -24,7 +24,8 @@ typedef struct
 u8 S_RxData;
 u8 S_Flag;
 	
-USART1_STRUCT USART3_Real={115200,0,0,0,0,0};
+uint8_t S_TxPack[3];
+uint8_t S_RxPack[3];	
 
 
 void USART_Config(int bot)
@@ -47,6 +48,7 @@ void USART_Config(int bot)
 	GPIO_InitStructure.GPIO_Mode=GPIO_Mode_IN_FLOATING;
 	GPIO_InitStructure.GPIO_Pin=GPIO_Pin_10;
 	GPIO_InitStructure.GPIO_Speed=GPIO_Speed_50MHz;
+	GPIO_Init(GPIOA,&GPIO_InitStructure);
 	
 	//配置串口参数
 	
@@ -92,10 +94,11 @@ void USART_SentByte(u8 Byte)
 }
 
 
-void USART_SentArr(u8 *Arr)
+void USART_SentArr(u8 *Arr,u8 Len)
 {
+
 	u16 i;
-	for(i=0;i<12;i++)
+	for(i=0;i<Len;i++)
 	{
 		USART_SentByte(Arr[i]);
 	}
@@ -148,6 +151,19 @@ int fputc(int ch,FILE *f)
 	return ch;
 
 }
+
+void S_SendPack(void)
+{
+	USART_SentByte(0xFF);
+	USART_SentArr(S_TxPack,3);
+	USART_SentByte(0xFE);
+
+
+}
+
+
+
+
 u8 S_GetRxFlag(void)
 {
 	if(S_Flag==1)
@@ -159,26 +175,54 @@ u8 S_GetRxFlag(void)
 		return 0;
 }
 
-u8 S_GetRxData(void)
-{
-	return S_RxData;
-
-}
 
 //只能使用特定函数名，因为使用不同的中断类型
 
 void USART1_IRQHandler(void)
 {
+	//状态机接受
+	static u8 RxState=0;
+	static u8 P_RxData=0;
 		if(USART_GetFlagStatus(USART1,USART_FLAG_RXNE)==SET)
 		{
-			S_RxData=USART_ReceiveData(USART1);
-			S_Flag=1;
+			u8 RxData=USART_ReceiveData(USART1);
+			if(RxState==0)
+			{
+				if(RxData==0xFF)
+				{
+					RxState=1;
+					P_RxData=0;
+				}
+			
+			}
+			else if(RxState==1)
+			{
+				S_RxPack[P_RxData]=RxData;
+				P_RxData++;
+				if(P_RxData>=3)
+				{
+					RxState=2;
+				}
+				
+				
+			}
+			else if(RxState==2)
+			{
+				if(RxData==0xFE)
+				{
+					RxState=0;
+					S_Flag=1;
+				}
+			
+			}
 			USART_ClearITPendingBit(USART1,USART_FLAG_RXNE);
 		}
 }
 
 void Lora_init(void)
 {
+
+	
 	GPIO_InitTypeDef GPIO_InitStructure;
 	//串口引脚分配时钟
 	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
@@ -193,67 +237,67 @@ void Lora_init(void)
 	GPIO_SetBits(GPIOC,GPIO_Pin_13);
 	
 	//    M0为B3 M1为A15
-	
-	//配置PC0,PC1为输出模式 
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_15;		//M0,M1引脚
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;//输出模式
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;//频率2MHz
-	GPIO_Init(GPIOA, &GPIO_InitStructure);			//初始化引脚 
-
 	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_3;			//M0,M1引脚
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;				//输出模式
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;				//频率2MHz
 	GPIO_Init(GPIOB, &GPIO_InitStructure);							//初始化引脚 
 
+	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_4;			//M0,M1引脚
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;				//输出模式
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;				//频率2MHz
+	GPIO_Init(GPIOB, &GPIO_InitStructure);
 	//拉高引脚电平
-	GPIO_SetBits(GPIOA,GPIO_Pin_15);
-    GPIO_SetBits(GPIOB,GPIO_Pin_3);
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO,ENABLE);
+	GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable,ENABLE);
+	
+//	GPIO_SetBits(GPIOA,GPIO_Pin_15);
+//    GPIO_SetBits(GPIOB,GPIO_Pin_3);
 	
 	//配置PC3为输入模式 
 	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_8;			            //AUX引脚
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;			//输入模式
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;			//输入模式
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;				//频率2MHz
 	GPIO_Init(GPIOA, &GPIO_InitStructure);	                        //初始化引脚
-	GPIO_SetBits(GPIOA,GPIO_Pin_8);
+	//GPIO_SetBits(GPIOA,GPIO_Pin_8);
+	
+	
 }
 
 void Lora_Mode(u8 mode)
 {   
-
+	//while(GPIO_ReadInputDataBit (GPIOA,GPIO_Pin_8)!=1)
     switch(mode)
     {
 		
         case 0x00: //传输模式
 		{
 	    GPIO_ResetBits(GPIOB,GPIO_Pin_3);//M0
-	    GPIO_ResetBits(GPIOA,GPIO_Pin_15);//M1
+	    GPIO_ResetBits(GPIOB,GPIO_Pin_4);//M1
         break;
 		}
         case 0x01://WOR模式
 		{
 	    GPIO_SetBits(GPIOB,GPIO_Pin_3);//M0
-	    GPIO_ResetBits(GPIOA,GPIO_Pin_15);//M1
+	    GPIO_ResetBits(GPIOB,GPIO_Pin_4);//M1
         break;
 		}
         case 0x02://配置模式
 		{
-			GPIO_ResetBits(GPIOB,GPIO_Pin_3);//M0 0
-			GPIO_SetBits(GPIOA,GPIO_Pin_15);//M1 1
+			GPIO_ResetBits(GPIOB,GPIO_Pin_4);//M0 0
+			GPIO_SetBits(GPIOB,GPIO_Pin_3);//M1 1
 			break;
 		}
         case 0x03://深度休眠模式
 		{
   		GPIO_SetBits(GPIOB,GPIO_Pin_3);
-    	GPIO_SetBits(GPIOA,GPIO_Pin_15);
+    	GPIO_SetBits(GPIOB,GPIO_Pin_4);
         break;
 		}
 		
 	}   
-	//等待AUX脚变为低电平（说明模式切换完成）
-	//while(GPIO_ReadInputDataBit(GPIOC,GPIO_Pin_3) == 0)                    
-	Delay_ms(100);  
-}
 
+}
+/*
 void USART3_SendString(u8* Data, u32 Len)
 {
     u32 i=0;
@@ -286,7 +330,7 @@ void Lora_Write_REG(u8 Begin_Addr, u8 length, u8 ADDH, u8 ADDL, u8 NETID, u8 REG
 
 
 
-
+*/
 
 
 
@@ -301,16 +345,16 @@ void Lora_Write_REG(u8 Begin_Addr, u8 length, u8 ADDH, u8 ADDL, u8 NETID, u8 REG
 * 出口参数：无
 * 说	明：无
 ****************************************************************************/
-void Lora_Read_REG(u8 Begin_Addr, u8 length)
-{   
-    USART3_Real.TxBuf[0] = 0xC1;
-    USART3_Real.TxBuf[1] = Begin_Addr;   
-    USART3_Real.TxBuf[2] = length;
-    
-    USART3_SendString(USART3_Real.TxBuf, 3);                        
-}
+//void Lora_Read_REG(u8 Begin_Addr, u8 length)
+//{   
+//    USART3_Real.TxBuf[0] = 0xC1;
+//    USART3_Real.TxBuf[1] = Begin_Addr;   
+//    USART3_Real.TxBuf[2] = length;
+//    
+//    USART3_SendString(USART3_Real.TxBuf, 3);                        
+//}
 
 
-
+//*/
 
 
